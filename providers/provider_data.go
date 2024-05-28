@@ -6,14 +6,12 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"os"
 	"regexp"
 	"strings"
 
 	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/oauth2-proxy/oauth2-proxy/v7/pkg/apis/options"
 	"github.com/oauth2-proxy/oauth2-proxy/v7/pkg/apis/sessions"
-	"github.com/oauth2-proxy/oauth2-proxy/v7/pkg/logger"
 	internaloidc "github.com/oauth2-proxy/oauth2-proxy/v7/pkg/providers/oidc"
 	"github.com/oauth2-proxy/oauth2-proxy/v7/pkg/providers/util"
 	"golang.org/x/oauth2"
@@ -27,17 +25,15 @@ const (
 // ProviderData contains information required to configure all implementations
 // of OAuth2 providers
 type ProviderData struct {
-	ProviderName      string
-	LoginURL          *url.URL
-	RedeemURL         *url.URL
-	ProfileURL        *url.URL
-	ProtectedResource *url.URL
-	ValidateURL       *url.URL
-	ClientID          string
-	ClientSecret      string
-	ClientSecretFile  string
-	Scope             string
-	// The response mode requested from the provider or empty for default ("query")
+	ProviderName            string
+	LoginURL                *url.URL
+	RedeemURL               *url.URL
+	ProfileURL              *url.URL
+	ProtectedResource       *url.URL
+	ValidateURL             *url.URL
+	ClientID                string
+	AuthenticationConfig    AuthenticationConfig
+	Scope                   string
 	AuthRequestResponseMode string
 	// The picked CodeChallenge Method or empty if none.
 	CodeChallengeMethod string
@@ -67,17 +63,7 @@ type ProviderData struct {
 func (p *ProviderData) Data() *ProviderData { return p }
 
 func (p *ProviderData) GetClientSecret() (clientSecret string, err error) {
-	if p.ClientSecret != "" || p.ClientSecretFile == "" {
-		return p.ClientSecret, nil
-	}
-
-	// Getting ClientSecret can fail in runtime so we need to report it without returning the file name to the user
-	fileClientSecret, err := os.ReadFile(p.ClientSecretFile)
-	if err != nil {
-		logger.Errorf("error reading client secret file %s: %s", p.ClientSecretFile, err)
-		return "", errors.New("could not read client secret file")
-	}
-	return string(fileClientSecret), nil
+	return p.AuthenticationConfig.GetClientSecret()
 }
 
 // LoginURLParams returns the parameter values that should be passed to the IdP

@@ -1,6 +1,7 @@
 package providers
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -8,6 +9,8 @@ import (
 	"time"
 
 	"github.com/coreos/go-oidc/v3/oidc"
+	"github.com/golang-jwt/jwt/v5"
+	"github.com/google/uuid"
 	"github.com/oauth2-proxy/oauth2-proxy/v7/pkg/apis/options"
 	"github.com/oauth2-proxy/oauth2-proxy/v7/pkg/apis/sessions"
 	"github.com/oauth2-proxy/oauth2-proxy/v7/pkg/logger"
@@ -25,7 +28,7 @@ type OIDCProvider struct {
 const oidcDefaultScope = "openid email profile"
 
 // NewOIDCProvider initiates a new OIDCProvider
-func NewOIDCProvider(p *ProviderData, opts options.OIDCOptions) *OIDCProvider {
+func NewOIDCProvider(p *ProviderData, opts options.OIDCOptions) (*OIDCProvider, error) {
 	name := "OpenID Connect"
 
 	if p.ProviderName != "" {
@@ -51,7 +54,7 @@ func NewOIDCProvider(p *ProviderData, opts options.OIDCOptions) *OIDCProvider {
 	return &OIDCProvider{
 		ProviderData: p,
 		SkipNonce:    opts.InsecureSkipNonce,
-	}
+	}, nil
 }
 
 var _ Provider = (*OIDCProvider)(nil)
@@ -67,16 +70,26 @@ func (p *OIDCProvider) GetLoginURL(redirectURI, state, nonce string, extraParams
 
 // Redeem exchanges the OAuth2 authentication token for an ID token
 func (p *OIDCProvider) Redeem(ctx context.Context, redirectURL, code, codeVerifier string) (*sessions.SessionState, error) {
+	switch p.AuthenticationConfig.AuthenticationMethod {
+	case ClientSecret:
+		return p.RedeemBasic(ctx, redirectURL, code, codeVerifier)
+	case PrivateKeyJWT:
+		return p.RedeemAssertion(ctx, redirectURL, code, codeVerifier)
+	default:
+		return nil, fmt.Errorf("unsupported authentication method: %v", p.AuthenticationConfig.AuthenticationMethod)
+	}
+}
+
+// RedeemBasic exchanges the OAuth2 authentication token for an ID token using client_secret
+func (p *OIDCProvider) RedeemBasic(ctx context.Context, redirectURL, code, codeVerifier string) (*sessions.SessionState, error) {
 	clientSecret, err := p.GetClientSecret()
 	if err != nil {
 		return nil, err
 	}
-
 	var opts []oauth2.AuthCodeOption
 	if codeVerifier != "" {
 		opts = append(opts, oauth2.SetAuthURLParam("code_verifier", codeVerifier))
 	}
-
 	c := oauth2.Config{
 		ClientID:     p.ClientID,
 		ClientSecret: clientSecret,
@@ -90,6 +103,63 @@ func (p *OIDCProvider) Redeem(ctx context.Context, redirectURL, code, codeVerifi
 	token, err := c.Exchange(ctx, code, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("token exchange failed: %v", err)
+	}
+	return p.createSession(ctx, token, false)
+}
+
+func (p *OIDCProvider) makeAssertionToken() (string, error) {
+	jwtConfig := p.AuthenticationConfig.PrivateKeyJWTData
+	authToken := &jwt.Token{
+		Header: map[string]interface{}{
+			"alg": jwtConfig.SigningMethod.Alg(),
+			"typ": "JWT",
+			"kid": jwtConfig.KeyID,
+		},
+		Claims: jwt.MapClaims{
+			"iat": time.Now().Unix(),
+			"exp": time.Now().Add(jwtConfig.Expire).Unix(),
+			"aud": p.RedeemURL.String(),
+			"sub": p.ClientID,
+			"iss": p.ClientID,
+			"jti": uuid.New().String(),
+		},
+		Method: jwtConfig.SigningMethod,
+	}
+
+	signedAuthToken, err := authToken.SignedString(jwtConfig.JWTKey)
+	if err != nil {
+		return "", err
+	}
+
+	return signedAuthToken, nil
+}
+
+// RedeemAssertion exchanges the OAuth2 authentication token for an ID token using client assertions
+func (p *OIDCProvider) RedeemAssertion(ctx context.Context, redirectURL, code, codeVerifier string) (*sessions.SessionState, error) {
+	if code == "" {
+		return nil, ErrMissingCode
+	}
+
+	signedAuthToken, err := p.makeAssertionToken()
+	if err != nil {
+		return nil, err
+	}
+
+	params := url.Values{}
+	params.Add("client_id", p.ClientID)
+	params.Add("grant_type", "authorization_code")
+	params.Add("redirect_uri", redirectURL)
+	params.Add("code", code)
+	if codeVerifier != "" {
+		params.Add("code_verifier", codeVerifier)
+	}
+	params.Add("client_assertion", signedAuthToken)
+	params.Add("client_assertion_type", "urn:ietf:params:oauth:client-assertion-type:jwt-bearer")
+	params.Add("scope", p.Scope)
+
+	token, err := p.fetchTokenUsingAssertionsAuth(ctx, params)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get token: %v", err)
 	}
 
 	return p.createSession(ctx, token, false)
@@ -144,11 +214,21 @@ func (p *OIDCProvider) RefreshSession(ctx context.Context, s *sessions.SessionSt
 // redeemRefreshToken uses a RefreshToken with the RedeemURL to refresh the
 // Access Token and (probably) the ID Token.
 func (p *OIDCProvider) redeemRefreshToken(ctx context.Context, s *sessions.SessionState) error {
+	switch p.AuthenticationConfig.AuthenticationMethod {
+	case ClientSecret:
+		return p.redeemRefreshTokenBasic(ctx, s)
+	case PrivateKeyJWT:
+		return p.redeemRefreshTokenAssertions(ctx, s)
+	default:
+		return fmt.Errorf("unsupported authentication method: %v", p.AuthenticationConfig.AuthenticationMethod)
+	}
+}
+
+func (p *OIDCProvider) redeemRefreshTokenBasic(ctx context.Context, s *sessions.SessionState) error {
 	clientSecret, err := p.GetClientSecret()
 	if err != nil {
 		return err
 	}
-
 	c := oauth2.Config{
 		ClientID:     p.ClientID,
 		ClientSecret: clientSecret,
@@ -164,12 +244,43 @@ func (p *OIDCProvider) redeemRefreshToken(ctx context.Context, s *sessions.Sessi
 	if err != nil {
 		return fmt.Errorf("failed to get token: %v", err)
 	}
+	err = p.refreshSessionFromToken(ctx, s, token)
+	if err != nil {
+		return err
+	}
+	return nil
+}
 
+func (p *OIDCProvider) redeemRefreshTokenAssertions(ctx context.Context, s *sessions.SessionState) error {
+	signedAuthToken, err := p.makeAssertionToken()
+	if err != nil {
+		return err
+	}
+
+	params := url.Values{}
+	params.Add("client_id", p.ClientID)
+	params.Add("grant_type", "refresh_token")
+	params.Add("client_assertion", signedAuthToken)
+	params.Add("client_assertion_type", "urn:ietf:params:oauth:client-assertion-type:jwt-bearer")
+	params.Add("scope", p.Scope)
+
+	token, err := p.fetchTokenUsingAssertionsAuth(ctx, params)
+	if err != nil {
+		return fmt.Errorf("failed to get token: %v", err)
+	}
+
+	err = p.refreshSessionFromToken(ctx, s, token)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (p *OIDCProvider) refreshSessionFromToken(ctx context.Context, s *sessions.SessionState, token *oauth2.Token) error {
 	newSession, err := p.createSession(ctx, token, true)
 	if err != nil {
 		return fmt.Errorf("unable create new session state from response: %v", err)
 	}
-
 	// It's possible that if the refresh token isn't in the token response the
 	// session will not contain an id token.
 	// If it doesn't it's probably better to retain the old one
@@ -180,12 +291,10 @@ func (p *OIDCProvider) redeemRefreshToken(ctx context.Context, s *sessions.Sessi
 		s.Groups = newSession.Groups
 		s.PreferredUsername = newSession.PreferredUsername
 	}
-
 	s.AccessToken = newSession.AccessToken
 	s.RefreshToken = newSession.RefreshToken
 	s.CreatedAt = newSession.CreatedAt
 	s.ExpiresOn = newSession.ExpiresOn
-
 	return nil
 }
 
@@ -215,6 +324,42 @@ func (p *OIDCProvider) CreateSessionFromToken(ctx context.Context, token string)
 	ss.SetExpiresOn(idToken.Expiry)
 
 	return ss, nil
+}
+
+func (p *OIDCProvider) fetchTokenUsingAssertionsAuth(ctx context.Context, params url.Values) (*oauth2.Token, error) {
+	// Get the token from the body that we got from the token endpoint.
+	var jsonResponse struct {
+		AccessToken  string `json:"access_token"`
+		RefreshToken string `json:"refresh_token"`
+		IDToken      string `json:"id_token"`
+		TokenType    string `json:"token_type"`
+		ExpiresIn    int64  `json:"expires_in"`
+		Scope        string `json:"scope"`
+	}
+	err := requests.New(p.RedeemURL.String()).
+		WithContext(ctx).
+		WithMethod("POST").
+		WithBody(bytes.NewBufferString(params.Encode())).
+		SetHeader("Content-Type", "application/x-www-form-urlencoded").
+		Do().
+		UnmarshalInto(&jsonResponse)
+	if err != nil {
+		return nil, err
+	}
+	logger.Errorln("jsonResponse", jsonResponse)
+
+	token := oauth2.Token{
+		AccessToken:  jsonResponse.AccessToken,
+		RefreshToken: jsonResponse.RefreshToken,
+		TokenType:    jsonResponse.TokenType,
+
+		Expiry: time.Now().Add(time.Duration(jsonResponse.ExpiresIn) * time.Second),
+	}
+	token = *token.WithExtra(map[string]interface{}{
+		"id_token": jsonResponse.IDToken,
+		"scope":    jsonResponse.Scope,
+	})
+	return &token, nil
 }
 
 // createSession takes an oauth2.Token and creates a SessionState from it.

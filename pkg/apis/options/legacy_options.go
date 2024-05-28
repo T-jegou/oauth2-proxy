@@ -50,6 +50,7 @@ func NewLegacyOptions() *LegacyOptions {
 
 		LegacyProvider: LegacyProvider{
 			ProviderType:          "google",
+			AuthenticationMethod:  "client_secret",
 			AzureTenant:           "common",
 			ApprovalPrompt:        "force",
 			UserIDClaim:           "email",
@@ -481,9 +482,7 @@ func legacyServerFlagset() *pflag.FlagSet {
 }
 
 type LegacyProvider struct {
-	ClientID         string `flag:"client-id" cfg:"client_id"`
-	ClientSecret     string `flag:"client-secret" cfg:"client_secret"`
-	ClientSecretFile string `flag:"client-secret-file" cfg:"client_secret_file"`
+	ClientID string `flag:"client-id" cfg:"client_id"`
 
 	KeycloakGroups                         []string `flag:"keycloak-group" cfg:"keycloak_groups"`
 	AzureTenant                            string   `flag:"azure-tenant" cfg:"azure_tenant"`
@@ -538,14 +537,24 @@ type LegacyProvider struct {
 	AllowedRoles                       []string `flag:"allowed-role" cfg:"allowed_roles"`
 	BackendLogoutURL                   string   `flag:"backend-logout-url" cfg:"backend_logout_url"`
 
-	AcrValues  string `flag:"acr-values" cfg:"acr_values"`
-	JWTKey     string `flag:"jwt-key" cfg:"jwt_key"`
-	JWTKeyFile string `flag:"jwt-key-file" cfg:"jwt_key_file"`
-	PubJWKURL  string `flag:"pubjwk-url" cfg:"pubjwk_url"`
+	AcrValues string `flag:"acr-values" cfg:"acr_values"`
+	PubJWKURL string `flag:"pubjwk-url" cfg:"pubjwk_url"`
 	// PKCE Code Challenge method to use (either S256 or plain)
 	CodeChallengeMethod string `flag:"code-challenge-method" cfg:"code_challenge_method"`
 	// Provided for legacy reasons, to be dropped in newer version see #1667
 	ForceCodeChallengeMethod string `flag:"force-code-challenge-method" cfg:"force_code_challenge_method"`
+
+	// authentication options
+	AuthenticationMethod string        `flag:"authentication-method" cfg:"authentication_method"`
+	ClientSecret         string        `flag:"client-secret" cfg:"client_secret"`
+	ClientSecretFile     string        `flag:"client-secret-file" cfg:"client_secret_file"`
+	TLSCertFile          string        `flag:"tls-cert-file" cfg:"tls_cert_file"`
+	TLSKeyFile           string        `flag:"tls-key-file" cfg:"tls_key_file"`
+	JWTKey               string        `flag:"jwt-key" cfg:"jwt_key"`
+	JWTKeyFile           string        `flag:"jwt-key-file" cfg:"jwt_key_file"`
+	JWTAlgorithm         string        `flag:"jwt-algorithm" cfg:"jwt_algorithm"`
+	JWTKeyID             string        `flag:"jwt-key-id" cfg:"jwt_key_id"`
+	JWTExpire            time.Duration `flag:"jwt-expire" cfg:"jwt_expire"`
 }
 
 func legacyProviderFlagSet() *pflag.FlagSet {
@@ -566,8 +575,6 @@ func legacyProviderFlagSet() *pflag.FlagSet {
 	flagSet.StringSlice("gitlab-group", []string{}, "restrict logins to members of this group (may be given multiple times)")
 	flagSet.StringSlice("gitlab-project", []string{}, "restrict logins to members of this project (may be given multiple times) (eg `group/project=accesslevel`). Access level should be a value matching Gitlab access levels (see https://docs.gitlab.com/ee/api/members.html#valid-access-levels), defaulted to 20 if absent")
 	flagSet.String("client-id", "", "the OAuth Client ID: ie: \"123456.apps.googleusercontent.com\"")
-	flagSet.String("client-secret", "", "the OAuth Client Secret")
-	flagSet.String("client-secret-file", "", "the file with OAuth Client Secret")
 
 	flagSet.String("provider", "google", "OAuth provider")
 	flagSet.String("provider-display-name", "", "Provider display name")
@@ -598,13 +605,23 @@ func legacyProviderFlagSet() *pflag.FlagSet {
 	flagSet.String("force-code-challenge-method", "", "Deprecated - use --code-challenge-method")
 
 	flagSet.String("acr-values", "", "acr values string:  optional")
-	flagSet.String("jwt-key", "", "private key in PEM format used to sign JWT, so that you can say something like -jwt-key=\"${OAUTH2_PROXY_JWT_KEY}\": required by login.gov")
-	flagSet.String("jwt-key-file", "", "path to the private key file in PEM format used to sign the JWT so that you can say something like -jwt-key-file=/etc/ssl/private/jwt_signing_key.pem: required by login.gov")
 	flagSet.String("pubjwk-url", "", "JWK pubkey access endpoint: required by login.gov")
 
 	flagSet.String("user-id-claim", OIDCEmailClaim, "(DEPRECATED for `oidc-email-claim`) which claim contains the user ID")
 	flagSet.StringSlice("allowed-group", []string{}, "restrict logins to members of this group (may be given multiple times)")
 	flagSet.StringSlice("allowed-role", []string{}, "(keycloak-oidc) restrict logins to members of these roles (may be given multiple times)")
+
+	flagSet.String("authentication-method", "client_secret", "Authentication method to use; can be \"client_secret\", \"mtls\" or \"private_key_jwt\"")
+	flagSet.String("client-secret", "", "the OAuth Client Secret")
+	flagSet.String("client-secret-file", "", "the file with OAuth Client Secret")
+	flagSet.String("tls-cert-file", "", "path to certificate file")
+	flagSet.String("tls-key-file", "", "path to private key file")
+	flagSet.String("jwt-key", "", "private key in PEM format used to sign JWT, so that you can say something like -jwt-key=\"${OAUTH2_PROXY_JWT_KEY}\": required by login.gov and when authenticating with JWT")
+	flagSet.String("jwt-key-file", "", "path to the private key file in PEM format used to sign the JWT so that you can say something like -jwt-key-file=/etc/ssl/private/jwt_signing_key.pem: required by login.gov and when authenticating with JWT")
+	flagSet.String("jwt-algorithm", "", "the algorithm to use when signing the JWT")
+	flagSet.String("jwt-key-id", "", "the key id to use in the JWT header")
+	flagSet.Duration("jwt-expire", time.Duration(0), "the duration that the generated JWT will be valid")
+
 	flagSet.String("backend-logout-url", "", "url to perform a backend logout, {id_token} can be used as placeholder for the id_token")
 
 	return flagSet
@@ -669,10 +686,24 @@ func (l LegacyServer) convert() (Server, Server) {
 func (l *LegacyProvider) convert() (Providers, error) {
 	providers := Providers{}
 
+	providerAuthentication := AuthenticationOptions{
+		Method:           AuthenticationMethod(l.AuthenticationMethod),
+		ClientSecret:     l.ClientSecret,
+		ClientSecretFile: l.ClientSecretFile,
+
+		TLSCertFile: l.TLSCertFile,
+		TLSKeyFile:  l.TLSKeyFile,
+
+		JWTKey:       l.JWTKey,
+		JWTKeyFile:   l.JWTKeyFile,
+		JWTAlgorithm: l.JWTAlgorithm,
+		JWTKeyID:     l.JWTKeyID,
+		JWTExpire:    l.JWTExpire,
+	}
+
 	provider := Provider{
 		ClientID:                 l.ClientID,
-		ClientSecret:             l.ClientSecret,
-		ClientSecretFile:         l.ClientSecretFile,
+		AuthenticationConfig:     providerAuthentication,
 		Type:                     ProviderType(l.ProviderType),
 		CAFiles:                  l.ProviderCAFiles,
 		UseSystemTrustStore:      l.UseSystemTrustStore,
@@ -742,9 +773,7 @@ func (l *LegacyProvider) convert() (Providers, error) {
 		}
 	case "login.gov":
 		provider.LoginGovConfig = LoginGovOptions{
-			JWTKey:     l.JWTKey,
-			JWTKeyFile: l.JWTKeyFile,
-			PubJWKURL:  l.PubJWKURL,
+			PubJWKURL: l.PubJWKURL,
 		}
 	case "bitbucket":
 		provider.BitbucketConfig = BitbucketOptions{

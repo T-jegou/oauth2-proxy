@@ -9,10 +9,16 @@ import (
 	. "github.com/oauth2-proxy/oauth2-proxy/v7/pkg/apis/options/testutil"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/onsi/gomega/format"
 	"github.com/spf13/pflag"
 )
 
 var _ = Describe("Load", func() {
+
+	// we are comparing very large objects and we want to see the differences
+	format.MaxLength = 50000
+	format.MaxDepth = 10
+
 	optionsWithNilProvider := NewOptions()
 	optionsWithNilProvider.Providers = nil
 
@@ -37,6 +43,7 @@ var _ = Describe("Load", func() {
 
 		LegacyProvider: LegacyProvider{
 			ProviderType:          "google",
+			AuthenticationMethod:  "client_secret",
 			AzureTenant:           "common",
 			ApprovalPrompt:        "force",
 			UserIDClaim:           "email",

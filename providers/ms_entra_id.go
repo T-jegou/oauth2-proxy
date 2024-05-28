@@ -47,8 +47,14 @@ func NewMicrosoftEntraIDProvider(p *ProviderData, opts options.Provider) *Micros
 		name: microsoftEntraIDProviderName,
 	})
 
+	oidcProvider, err := NewOIDCProvider(p, options.OIDCOptions{InsecureSkipNonce: false})
+	if err != nil {
+		logger.Errorf("could not create oidc provider: %v", err)
+		return nil
+	}
+
 	return &MicrosoftEntraIDProvider{
-		OIDCProvider: NewOIDCProvider(p, opts.OIDCConfig),
+		OIDCProvider: oidcProvider,
 
 		multiTenantAllowedTenants: opts.MicrosoftEntraIDConfig.AllowedTenants,
 		federatedTokenAuth:        opts.MicrosoftEntraIDConfig.FederatedTokenAuth,

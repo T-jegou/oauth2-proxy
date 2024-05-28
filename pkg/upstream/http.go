@@ -91,7 +91,7 @@ func (h *httpUpstreamProxy) ServeHTTP(rw http.ResponseWriter, req *http.Request)
 		req.Header.Set("GAP-Auth", rw.Header().Get("GAP-Auth"))
 		h.auth.SignRequest(req)
 	}
-	if h.wsHandler != nil && strings.EqualFold(req.Header.Get("Connection"), "upgrade") && req.Header.Get("Upgrade") == "websocket" {
+	if h.wsHandler != nil && strings.Contains(req.Header.Get("Connection"), "upgrade") && req.Header.Get("Upgrade") == "websocket" {
 		h.wsHandler.ServeHTTP(rw, req)
 	} else {
 		h.handler.ServeHTTP(rw, req)

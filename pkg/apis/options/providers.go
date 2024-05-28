@@ -19,12 +19,9 @@ type Provider struct {
 	// ClientID is the OAuth Client ID that is defined in the provider
 	// This value is required for all providers.
 	ClientID string `json:"clientID,omitempty"`
-	// ClientSecret is the OAuth Client Secret that is defined in the provider
+	// AuthenticationConfig holds all configurations for the authentication method.
 	// This value is required for all providers.
-	ClientSecret string `json:"clientSecret,omitempty"`
-	// ClientSecretFile is the name of the file
-	// containing the OAuth Client Secret, it will be used if ClientSecret is not set.
-	ClientSecretFile string `json:"clientSecretFile,omitempty"`
+	AuthenticationConfig AuthenticationOptions `json:"authentication,omitempty"`
 
 	// KeycloakConfig holds all configurations for Keycloak provider.
 	KeycloakConfig KeycloakOptions `json:"keycloakConfig,omitempty"`
@@ -265,10 +262,6 @@ type OIDCOptions struct {
 }
 
 type LoginGovOptions struct {
-	// JWTKey is a private key in PEM format used to sign JWT,
-	JWTKey string `json:"jwtKey,omitempty"`
-	// JWTKeyFile is a path to the private key file in PEM format used to sign the JWT
-	JWTKeyFile string `json:"jwtKeyFile,omitempty"`
 	// PubJWKURL is the JWK pubkey access endpoint
 	PubJWKURL string `json:"pubjwkURL,omitempty"`
 }
@@ -277,6 +270,9 @@ func providerDefaults() Providers {
 	providers := Providers{
 		{
 			Type: "google",
+			AuthenticationConfig: AuthenticationOptions{
+				Method: ClientSecret,
+			},
 			AzureConfig: AzureOptions{
 				Tenant: "common",
 			},

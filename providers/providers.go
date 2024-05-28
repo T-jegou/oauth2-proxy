@@ -66,19 +66,23 @@ func NewProvider(providerConfig options.Provider) (Provider, error) {
 	case options.NextCloudProvider:
 		return NewNextcloudProvider(providerData), nil
 	case options.OIDCProvider:
-		return NewOIDCProvider(providerData, providerConfig.OIDCConfig), nil
+		return NewOIDCProvider(providerData, providerConfig.OIDCConfig)
 	default:
 		return nil, fmt.Errorf("unknown provider type %q", providerConfig.Type)
 	}
 }
 
 func newProviderDataFromConfig(providerConfig options.Provider) (*ProviderData, error) {
+	authConfig, err := NewAuthenticationConfig(providerConfig.AuthenticationConfig)
+	if err != nil {
+		return nil, err
+	}
+
 	p := &ProviderData{
 		Scope:                   providerConfig.Scope,
 		ClientID:                providerConfig.ClientID,
-		ClientSecret:            providerConfig.ClientSecret,
-		ClientSecretFile:        providerConfig.ClientSecretFile,
 		AuthRequestResponseMode: providerConfig.AuthRequestResponseMode,
+		AuthenticationConfig:    *authConfig,
 	}
 
 	needsVerifier, err := providerRequiresOIDCProviderVerifier(providerConfig.Type)

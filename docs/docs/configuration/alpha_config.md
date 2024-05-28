@@ -170,6 +170,32 @@ They may change between releases without notice.
 | `metricsServer` | _[Server](#server)_ | MetricsServer is used to configure the HTTP(S) server for metrics.<br/>You may choose to run both HTTP and HTTPS servers simultaneously.<br/>This can be done by setting the BindAddress and the SecureBindAddress simultaneously.<br/>To use the secure server you must configure a TLS certificate and key. |
 | `providers` | _[Providers](#providers)_ | Providers is used to configure multiple providers. |
 
+### AuthenticationMethod
+#### (`string` alias)
+
+(**Appears on:** [AuthenticationOptions](#authenticationoptions))
+
+
+
+### AuthenticationOptions
+
+(**Appears on:** [Provider](#provider))
+
+
+
+| Field | Type | Description |
+| ----- | ---- | ----------- |
+| `method` | _[AuthenticationMethod](#authenticationmethod)_ | Method defines how we should authenticate with the provider<br/>possible values are: 'client_secret', 'mtls', 'private_key_jwt' |
+| `clientSecret` | _string_ | ClientSecret is the OAuth Client Secret that is defined in the provider<br/>This value is required when AuthenticationMethod is set to 'client_secret' |
+| `clientSecretFile` | _string_ | ClientSecretFile is the name of the file<br/>containing the OAuth Client Secret, it will be used if ClientSecret is not set. |
+| `jwtKey` | _string_ | JWTKey is the private key used to sign the assertion<br/>this is required when UseAssertionAuthentication is set to 'true'<br/>only ecdsa keys are supported for now<br/>it is required when AuthenticationMethod is set to 'private_key_jwt'<br/>JWTKey is a private key in PEM format used to sign JWT, |
+| `jwtKeyFile` | _string_ | JWTKeyFile is a path to the private key file in PEM format used to sign the JWT<br/>it is required when AuthenticationMethod is set to 'private_key_jwt' |
+| `jwtAlgorithm` | _string_ | JWTAlgorithm is the algorithm used to sign the assertion<br/>this defaults to 'ES256'<br/>it is required when AuthenticationMethod is set to 'private_key_jwt' |
+| `jwtKeyID` | _string_ | JWTKeyID is the key id used to sign the assertion<br/>it is used as the "kid" jwt token header in the assertion<br/>if not provided, the "kid" header is not set<br/>it is required when AuthenticationMethod is set to 'private_key_jwt' |
+| `jwtExpire` | _duration_ | JWTExpire is the duration for which the assertion is valid<br/>this defaults to '5m'<br/>it is required when AuthenticationMethod is set to 'private_key_jwt' |
+| `tlsCertFile` | _string_ | TLSCertFile Path to the PEM encoded X.509 certificate to use when connecting to the provider<br/>it is required when AuthenticationMethod is set to 'mtls' |
+| `tlsKeyFile` | _string_ | TLSKeyFile Path to the PEM encoded X.509 key to use when connecting to the provider<br/>it is required when AuthenticationMethod is set to 'mtls' |
+
 ### AzureOptions
 
 (**Appears on:** [Provider](#provider))
@@ -301,8 +327,6 @@ make up the header value
 
 | Field | Type | Description |
 | ----- | ---- | ----------- |
-| `jwtKey` | _string_ | JWTKey is a private key in PEM format used to sign JWT, |
-| `jwtKeyFile` | _string_ | JWTKeyFile is a path to the private key file in PEM format used to sign the JWT |
 | `pubjwkURL` | _string_ | PubJWKURL is the JWK pubkey access endpoint |
 
 ### LoginURLParameter
@@ -426,8 +450,7 @@ Provider holds all configuration for a single provider
 | Field | Type | Description |
 | ----- | ---- | ----------- |
 | `clientID` | _string_ | ClientID is the OAuth Client ID that is defined in the provider<br/>This value is required for all providers. |
-| `clientSecret` | _string_ | ClientSecret is the OAuth Client Secret that is defined in the provider<br/>This value is required for all providers. |
-| `clientSecretFile` | _string_ | ClientSecretFile is the name of the file<br/>containing the OAuth Client Secret, it will be used if ClientSecret is not set. |
+| `authentication` | _[AuthenticationOptions](#authenticationoptions)_ | AuthenticationConfig holds all configurations for the authentication method.<br/>This value is required for all providers. |
 | `keycloakConfig` | _[KeycloakOptions](#keycloakoptions)_ | KeycloakConfig holds all configurations for Keycloak provider. |
 | `azureConfig` | _[AzureOptions](#azureoptions)_ | AzureConfig holds all configurations for Azure provider. |
 | `microsoftEntraIDConfig` | _[MicrosoftEntraIDOptions](#microsoftentraidoptions)_ | MicrosoftEntraIDConfig holds all configurations for Entra ID provider. |

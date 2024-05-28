@@ -46,10 +46,10 @@ func validateProvider(provider options.Provider, providerIDs map[string]struct{}
 		msgs = append(msgs, "provider missing setting: client-id")
 	}
 
-	if providerRequiresClientSecret(provider) {
-		msgs = append(msgs, validateClientSecret(provider)...)
-	}
+	// Add authentication method validations specific to the fork
+	msgs = append(msgs, validateAuthenticationConfig(provider.AuthenticationConfig)...)
 
+	// Add provider-specific validations
 	if provider.Type == "google" {
 		msgs = append(msgs, validateGoogleConfig(provider)...)
 	}
@@ -58,34 +58,8 @@ func validateProvider(provider options.Provider, providerIDs map[string]struct{}
 		msgs = append(msgs, validateEntraConfig(provider)...)
 	}
 
-	return msgs
-}
-
-// providerRequiresClientSecret checks if provider requires client secret to be set
-// or it can be omitted in favor of JWT token to authenticate oAuth client
-func providerRequiresClientSecret(provider options.Provider) bool {
-	if provider.Type == "entra-id" && provider.MicrosoftEntraIDConfig.FederatedTokenAuth {
-		return false
-	}
-
 	if provider.Type == "login.gov" {
-		return false
-	}
-
-	return true
-}
-
-func validateClientSecret(provider options.Provider) []string {
-	msgs := []string{}
-
-	if provider.ClientSecret == "" && provider.ClientSecretFile == "" {
-		msgs = append(msgs, "missing setting: client-secret or client-secret-file")
-	}
-	if provider.ClientSecret == "" && provider.ClientSecretFile != "" {
-		_, err := os.ReadFile(provider.ClientSecretFile)
-		if err != nil {
-			msgs = append(msgs, "could not read client secret file: "+provider.ClientSecretFile)
-		}
+		msgs = append(msgs, validateGovLoginConfig(provider)...)
 	}
 
 	return msgs
@@ -139,6 +113,16 @@ func validateEntraConfig(provider options.Provider) []string {
 		if err != nil {
 			msgs = append(msgs, "could not read entra federated token file")
 		}
+	}
+
+	return msgs
+}
+
+func validateGovLoginConfig(provider options.Provider) []string {
+	msgs := []string{}
+
+	if provider.Type == "login.gov" && provider.AuthenticationConfig.Method != options.PrivateKeyJWT {
+		msgs = append(msgs, "login.gov configuration not using private key jwt")
 	}
 
 	return msgs
