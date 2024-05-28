@@ -72,8 +72,10 @@ server:
 providers:
 - provider: google
   ID: google=oauth2-proxy
-  clientSecret: b2F1dGgyLXByb3h5LWNsaWVudC1zZWNyZXQK
   clientID: oauth2-proxy
+  authentication:
+  	method: client_secret
+  	clientSecret: b2F1dGgyLXByb3h5LWNsaWVudC1zZWNyZXQK
   azureConfig:
     tenant: common
   oidcConfig:
@@ -149,10 +151,13 @@ redirect_url="http://localhost:4180/oauth2/callback"
 
 		opts.Providers = options.Providers{
 			options.Provider{
-				ID:           "google=oauth2-proxy",
-				Type:         "google",
-				ClientSecret: "b2F1dGgyLXByb3h5LWNsaWVudC1zZWNyZXQK",
-				ClientID:     "oauth2-proxy",
+				ID:   "google=oauth2-proxy",
+				Type: "google",
+				AuthenticationConfig: options.AuthenticationOptions{
+					Method:       options.ClientSecret,
+					ClientSecret: "b2F1dGgyLXByb3h5LWNsaWVudC1zZWNyZXQK",
+				},
+				ClientID: "oauth2-proxy",
 				AzureConfig: options.AzureOptions{
 					Tenant: "common",
 				},
